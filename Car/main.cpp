@@ -1,6 +1,8 @@
 ﻿#include<Windows.h>
 #include<iostream>
 #include<conio.h>
+#include<thread>
+
 using std::cin;
 using std::cout;
 using std::endl;
@@ -123,6 +125,10 @@ class Car
 	int speed;
 	const int MAX_SPEED;
 	bool driver_inside;
+	struct
+	{
+		std::thread panel_thread;
+	}threads_container;	//Эта структура не имеет имени, и реализует только один экземпляр.
 public:
 	Car(double consumption, int capacity, int max_speed = 250):
 		MAX_SPEED
@@ -145,11 +151,15 @@ public:
 	void get_in()
 	{
 		driver_inside = true;
-		panel();
+		threads_container.panel_thread = std::thread(&Car::panel, this);
+		//panel();
 	}
 	void get_out()
 	{
 		driver_inside = false;
+		if (threads_container.panel_thread.joinable())threads_container.panel_thread.join();
+		system("CLS");
+		cout << "You are out of the Car" << endl;
 	}
 	void control()
 	{
