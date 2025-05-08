@@ -2,13 +2,13 @@
 #include<iostream>
 #include<conio.h>
 #include<thread>
-
 using std::cin;
 using std::cout;
 using std::endl;
+using namespace std::chrono_literals;
 
-#define Enter			13
-#define Escape			27
+#define Enter		13
+#define Escape		27
 
 #define MIN_TANK_CAPACITY	 20
 #define MAX_TANK_CAPACITY	120
@@ -40,6 +40,7 @@ public:
 	~Tank()
 	{
 		cout << "Tank is over" << endl;
+		//My Darkest Days - Come undone
 	}
 	double fill(double amount)
 	{
@@ -65,12 +66,13 @@ public:
 	}
 };
 
-#define MIN_ENGINE_CONSUMPTION		 3
-#define MAX_ENGINE_CONSUMPTION		25
+#define MIN_ENGINE_CONSUMPTION		3
+#define MAX_ENGINE_CONSUMPTION	   25
+
 class Engine
 {
-	const double CONSUPTION;	//расход на 100 км
-	const double DEFAULT_CONSUMPTON_PER_SECOND;
+	const double CONSUMPTION;	//расход на 100 км.
+	const double DEFAULT_CONSUMPTION_PER_SECOND;
 	double consumption_per_second;
 	bool is_started;
 public:
@@ -79,14 +81,14 @@ public:
 		return consumption_per_second;
 	}
 	Engine(double consumption) :
-		CONSUPTION
+		CONSUMPTION
 		(
 			consumption < MIN_ENGINE_CONSUMPTION ? MIN_ENGINE_CONSUMPTION :
 			consumption > MAX_ENGINE_CONSUMPTION ? MAX_ENGINE_CONSUMPTION :
 			consumption
 		),
-		DEFAULT_CONSUMPTON_PER_SECOND(CONSUPTION * 3e-5),
-		consumption_per_second(DEFAULT_CONSUMPTON_PER_SECOND)
+		DEFAULT_CONSUMPTION_PER_SECOND(CONSUMPTION * 3e-5),	//3*10^-5
+		consumption_per_second(DEFAULT_CONSUMPTION_PER_SECOND)
 	{
 		is_started = false;
 		cout << "Engine is ready" << endl;
@@ -109,8 +111,8 @@ public:
 	}
 	void info()const
 	{
-		cout << "Consumption: " << CONSUPTION << " liters/100km\n";
-		cout << "Default Consumption: " << DEFAULT_CONSUMPTON_PER_SECOND << " liters/s\n";
+		cout << "Consumption: " << CONSUMPTION << " liters/100km\n";
+		cout << "Default Consumption: " << DEFAULT_CONSUMPTION_PER_SECOND << " liters/s\n";
 		cout << "Consumption: " << consumption_per_second << " liters/s\n";
 	}
 };
@@ -123,14 +125,17 @@ class Car
 	Engine engine;
 	Tank tank;
 	int speed;
+	int acceleration;	//ускорение
 	const int MAX_SPEED;
 	bool driver_inside;
 	struct
 	{
 		std::thread panel_thread;
+		std::thread engine_idle_thread;
+		std::thread free_wheeling_thread;
 	}threads_container;	//Эта структура не имеет имени, и реализует только один экземпляр.
 public:
-	Car(double consumption, int capacity, int max_speed = 250):
+	Car(double consumption, int capacity, int max_speed = 250, int acceleration = 10) :
 		MAX_SPEED
 		(
 			max_speed < MAX_SPEED_LOWER_LIMIT ? MAX_SPEED_LOWER_LIMIT :
@@ -139,7 +144,8 @@ public:
 		),
 		engine(consumption),
 		tank(capacity),
-		speed(0)
+		speed(0),
+		acceleration(acceleration)
 	{
 		driver_inside = false;
 		cout << "Your car is ready to go, press 'Enter' to get in ;-)" << endl;
@@ -161,12 +167,47 @@ public:
 		system("CLS");
 		cout << "You are out of the Car" << endl;
 	}
+	void start()
+	{
+		if (tank.get_fuel_level())
+		{
+			engine.start();
+			threads_container.engine_idle_thread = std::thread(&Car::engine_idle, this);
+		}
+	}
+	void stop()
+	{
+		engine.stop();
+		if (threads_container.engine_idle_thread.joinable())
+			threads_container.engine_idle_thread.join();
+	}
+	void accelerate()
+	{
+		if (driver_inside && engine.started())
+		{
+			speed += acceleration;
+			if (!threads_container.free_wheeling_thread.joinable())
+				threads_container.free_wheeling_thread = std::thread(&Car::free_wheeling, this);
+			if (speed > MAX_SPEED)speed = MAX_SPEED;
+			std::this_thread::sleep_for(1s);
+		}
+	}
+	void slow_down()
+	{
+		if (driver_inside)
+		{
+			speed -= acceleration;
+			if (speed < 0)speed = 0;
+			std::this_thread::sleep_for(1s);
+		}
+	}
 	void control()
 	{
 		char key = 0;
 		do
 		{
-			key = _getch();
+			key = 0;
+			if (_kbhit())key = _getch();
 			switch (key)
 			{
 			case Enter:
@@ -177,18 +218,54 @@ public:
 				cout << "Введите объем топлива: "; cin >> fuel;
 				tank.fill(fuel);
 				break;
+			case 'I':case'i':	//Ignition
+				if (driver_inside)!engine.started() ? start() : stop();
+				break;
+			case 'W':case 'w':
+				accelerate();
+				break;
+			case 'S':case's':
+				slow_down();
+				break;
 			case Escape:
+				stop();
 				get_out();
 			}
+			if (tank.get_fuel_level() <= 0)stop();
+			if (speed <= 0 && threads_container.free_wheeling_thread.joinable())
+				threads_container.free_wheeling_thread.join();
 		} while (key != Escape);
 		//Concurent execution (одновременное выполнение).
+	}
+	void free_wheeling()
+	{
+		while (--speed > 0)
+		{
+			if (speed < 0)speed = 0;
+			std::this_thread::sleep_for(1s);
+		}
+	}
+	void engine_idle()
+	{
+		while (engine.started() && tank.give_fuel(engine.get_consumption_per_second()))
+		{
+			std::this_thread::sleep_for(1s);
+		}
 	}
 	void panel()
 	{
 		while (driver_inside)
 		{
 			system("CLS");
-			cout << "Fuel level: " << tank.get_fuel_level() << " liters\n";
+			cout << "Fuel level: " << tank.get_fuel_level() << " liters";
+			if (tank.get_fuel_level() < 5)
+			{
+				HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+				SetConsoleTextAttribute(hConsole, 0xCF);
+				cout << " LOW FUEL ";
+				SetConsoleTextAttribute(hConsole, 0x07);
+			}
+			cout << endl;
 			cout << "Engine is " << (engine.started() ? "started" : "stopped") << endl;
 			cout << "Speed:\t" << speed << " km/h\n";
 			Sleep(100);
@@ -219,14 +296,21 @@ void main()
 		tank.fill(fuel);
 		tank.info();
 	} while (true);
-	tank.info();
 #endif // TANK_CHECK
-	
+
 #ifdef ENGINE_CHECK
-	Engine engine(10); 
+	Engine engine(10);
 	engine.info();
 #endif // ENGINE_CHECK
-	Car BMW(10, 80, 270);
-	//BMW.info();
-	BMW.control();
+
+	Car bmw(10, 80, 270);
+	//bmw.info();
+	bmw.control();
 }
+
+/*
+-------------------------------------------------------------------
+Thread - это последовательность команд Центральному Процессору (ЦП).
+
+-------------------------------------------------------------------
+*/
